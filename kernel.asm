@@ -227,7 +227,7 @@ visualizer_update:
     
     ; Write Char
     mov ah, al     ; Attribute (Color)
-    mov al, 0x23   ; Char '#'
+    mov al, 0x01   ; smiley face, old val was 0x23   ; Char '#'
     mov [rdi], ax
 
 .done_vis:
