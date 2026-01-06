@@ -280,6 +280,7 @@ delay_ms:
     test rdi, rdi
     jz .done
     ; Calibrate: 1ms = 1193 ticks
+    push rsi
 .loop:
     push rdi
     
@@ -308,6 +309,7 @@ delay_ms:
     pop rdi
     dec rdi
     jnz .loop
+    pop rsi
 .done:
     ret
 
