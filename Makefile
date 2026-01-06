@@ -13,5 +13,8 @@ kernel.bin: kernel.asm sonic.bin
 sonic.bin: scd-Palmtree_Panic_Past.mid smart_converter.py
 	python3 smart_converter.py scd-Palmtree_Panic_Past.mid sonic.bin
 
+qemu:
+	qemu-system-x86_64 -drive format=raw,file=os.img -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
+
 clean:
 	rm -f *.bin os.img
