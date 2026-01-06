@@ -72,9 +72,9 @@ def midi_to_bin(input_file, output_file):
                         status = last_status
                     
                     cmd = status & 0xF0
+                    channel = status & 0x0F
                     
                     # Store event
-                    # We only really care about Note On/Off and Tempo
                     event_data = []
                     
                     if cmd in [0x80, 0x90, 0xA0, 0xB0, 0xE0]:
@@ -91,8 +91,6 @@ def midi_to_bin(input_file, output_file):
                             meta_content = data[p:p+l]
                             p += l
                             
-                            # Handle Tempo immediately or store it? 
-                            # Storing all and sorting is better.
                             all_events.append({
                                 'tick': curr_ticks,
                                 'type': 'meta',
@@ -107,7 +105,6 @@ def midi_to_bin(input_file, output_file):
                     
                     if cmd in [0x80, 0x90]:
                         # Filter Channel 10 (Percussion)
-                        channel = status & 0x0F
                         if channel == 9:
                             continue
                             
@@ -115,6 +112,7 @@ def midi_to_bin(input_file, output_file):
                             'tick': curr_ticks,
                             'type': 'midi',
                             'cmd': cmd,
+                            'channel': channel,
                             'note': event_data[0],
                             'vel': event_data[1]
                         })
@@ -133,42 +131,51 @@ def midi_to_bin(input_file, output_file):
     all_events.sort(key=lambda x: x['tick'])
     
     # --- Step 3: Normalize to Audio Stream (Highest Note Priority) ---
-    output_stream = [] # (duration_ms, divisor)
+    output_stream = [] # (duration_ms, divisor, channel)
     
-    current_tempo = 500000 # Default 120 BPM (us/beat)
+    current_tempo = 500000 
     current_tick = 0
-    active_notes = set() # Set of active MIDI note numbers
-    
-    # To accumulate small segments
-    accumulated_duration = 0.0
+    active_notes = set() # Set of (note, channel) tuples
     
     for event in all_events:
         delta_ticks = event['tick'] - current_tick
         
         if delta_ticks > 0:
             # Time passed -> Emit sound state
-            # Calculate duration in ms
             duration_ms = (delta_ticks * current_tempo / ticks_per_beat) / 1000.0
             
-            # Decide Frequency
             divisor = 0
+            channel = 0
+            
             if active_notes:
                 # Highest note priority
-                highest = max(active_notes)
-                # Freq = 440 * 2^((note-69)/12)
-                # Divisor = 1193180 / Freq
-                freq = 440.0 * (2.0 ** ((highest - 69) / 12.0))
+                highest = max(active_notes, key=lambda x: x[0])
+                note_val = highest[0]
+                channel = highest[1]
+                
+                freq = 440.0 * (2.0 ** ((note_val - 69) / 12.0))
                 divisor = int(1193180 / freq)
             
-            # Optimization: Merge with previous if same divisor
-            if output_stream and output_stream[-1][1] == divisor:
-                output_stream[-1] = (output_stream[-1][0] + duration_ms, divisor)
+            # Optimization: Merge if same divisor AND same channel
+            if output_stream and output_stream[-1][1] == divisor and output_stream[-1][2] == channel:
+                prev = output_stream[-1]
+                output_stream[-1] = (prev[0] + duration_ms, prev[1], prev[2])
             else:
-                output_stream.append((duration_ms, divisor))
+                output_stream.append((duration_ms, divisor, channel))
                 
             current_tick = event['tick']
             
         # Process Event State
+        if event['type'] == 'meta' and event['meta_type'] == 0x51:
+            d = event['data']
+            if len(d) >= 3:
+                current_tempo = (d[0] << 16) | (d[1] << 8) | d[2]
+                
+        elif event['type'] == 'midi':
+            cmd = event['cmd']
+            note = event['note']
+            vel = event['vel']
+            
         if event['type'] == 'meta' and event['meta_type'] == 0x51:
             # Tempo Change
             d = event['data']
@@ -179,33 +186,37 @@ def midi_to_bin(input_file, output_file):
             cmd = event['cmd']
             note = event['note']
             vel = event['vel']
+            channel = event['channel']
+            
+            note_tuple = (note, channel)
             
             if cmd == 0x90 and vel > 0:
-                active_notes.add(note)
+                active_notes.add(note_tuple)
             elif cmd == 0x80 or (cmd == 0x90 and vel == 0):
-                active_notes.discard(note)
+                active_notes.discard(note_tuple) 
 
     # --- Step 4: Write Binary ---
     print(f"Writing {len(output_stream)} frequency segments to {output_file}...")
     
     with open(output_file, 'wb') as f:
         count = 0
-        for duration_float, divisor in output_stream:
-            # Round duration
-            duration = int(round(duration_float))
+        for duration_float, divisor, channel in output_stream:
+            try:
+                duration = int(round(duration_float))
+            except:
+                duration = 0
             
             if duration <= 0: continue
             
-            # Split if > 65535 (uint16 max)
             while duration > 65535:
-                f.write(struct.pack('<HH', 65535, divisor))
+                f.write(struct.pack('<HHH', 65535, divisor, channel))
                 duration -= 65535
             
-            f.write(struct.pack('<HH', duration, divisor))
+            f.write(struct.pack('<HHH', duration, divisor, channel))
             count += 1
             
         # End Marker
-        f.write(struct.pack('<HH', 0, 0))
+        f.write(struct.pack('<HHH', 0, 0, 0))
         
     print(f"Done! Written {count} machine words.")
 

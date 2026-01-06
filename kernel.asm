@@ -63,8 +63,13 @@ play_loop:
     lodsw           ; Divisor (high 16)
     mov rcx, rax
     
-    ; End check (Dur=0, Div=0)
-    or rax, rbx
+    lodsw           ; Channel (Color info)
+    mov rdx, rax 
+    
+    ; End check (Dur=0, Div=0, Chan=0)
+    mov r8, rbx
+    or r8, rcx
+    or r8, rdx
     jz hang
     
     ; Divisor 0 = Silence
@@ -90,7 +95,8 @@ play_loop:
     out 0x61, al
     
     ; Visualize Note (Scrolls Screen)
-    mov rdi, rcx
+    mov rdi, rcx  ; Divisor
+    mov rsi, rdx  ; Channel (Color)
     call visualize_note
     
     ; Update Debug Info (Status Bar - Redraw after scroll)
@@ -232,8 +238,27 @@ visualize_note:
     add rax, 3840
     add rax, 0xB8000
     
-    ; Draw '#', Bright Green (0xA) or Cyan (0xB)
-    mov word [rax], 0x0A23 ; 0x0A=Green, 0x23='#'
+    ; Determine Color from Channel (RSI)
+    ; RSI contains Channel (0-15).
+    ; VGA Colors 1-15 are good. 0 is Black (no good).
+    ; We'll do (Channel % 15) + 1. Channels are usually 0-15 anyway.
+    mov r8, rsi
+    and r8, 0xF ; 0-15
+    inc r8      ; 1-16 (If 16 -> 0? No, 15+1=16. 16 is Blink Black? No 0-15 is FG)
+    
+    ; Wait, VGA attribute byte: [Blink][BG][BG][BG][FG][FG][FG][FG]
+    ; If FG > 15 (e.g. 16) it spills to BG or Blink.
+    ; So mask with 0xF. If 0 -> 1.
+    and r8, 0xF
+    jnz .col_ok
+    mov r8, 1 ; Default Blue
+.col_ok:
+    
+    ; Construct Attribute: 0000 (Black BG) + Color (FG)
+    ; AH = Attribute
+    mov al, 0x23 ; '#'    
+    mov [rax], al ; Char
+    mov [rax+1], r8b ; Attribute (Color)
     ret
 
 scroll_screen:
