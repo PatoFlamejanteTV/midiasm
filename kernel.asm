@@ -96,8 +96,10 @@ play_loop:
     
     ; Visualize Note (Scrolls Screen)
     mov rdi, rcx  ; Divisor
-    mov rsi, rdx  ; Channel (Color)
+    ; Color is in RDX
+    push rsi      ; Save Music Pointer (CRITICAL FIX)
     call visualize_note
+    pop rsi       ; Restore Music Pointer
     
     ; Update Debug Info (Status Bar - Redraw after scroll)
     push rbx
@@ -238,11 +240,9 @@ visualize_note:
     add rax, 3840
     add rax, 0xB8000
     
-    ; Determine Color from Channel (RSI)
-    ; RSI contains Channel (0-15).
-    ; VGA Colors 1-15 are good. 0 is Black (no good).
-    ; We'll do (Channel % 15) + 1. Channels are usually 0-15 anyway.
-    mov r8, rsi
+    ; Determine Color from Channel (RDX)
+    ; RDX contains Channel (0-15).
+    mov r8, rdx
     and r8, 0xF ; 0-15
     inc r8      ; 1-16 (If 16 -> 0? No, 15+1=16. 16 is Blink Black? No 0-15 is FG)
     
