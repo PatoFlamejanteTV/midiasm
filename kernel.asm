@@ -237,8 +237,11 @@ visualize_note:
     ret
 
 scroll_screen:
-    ; Memcpy 0xB80A0 (Line 1) to 0xB8000 (Line 0)
-    ; Size: 24 lines * 80 chars * 2 bytes = 3840 bytes.
+    push rax
+    push rcx
+    push rsi
+    push rdi
+    
     cld
     mov rsi, 0xB8000 + 160
     mov rdi, 0xB8000
@@ -250,16 +253,27 @@ scroll_screen:
     mov rax, 0x0720072007200720 ; Spaces
     mov rcx, 20 ; 160 / 8
     rep stosq
+    
+    pop rdi
+    pop rsi
+    pop rcx
+    pop rax
     ret
 
 clear_screen:
+    push rax
+    push rcx
+    push rdi
+
     mov rdi, 0xB8000
-    mov rax, 0x0120012001200120 ; Blue Background Spaces (0x10=BlueBg?) No 0x1F=BlueBgWhiteFg
-    ; Let's use Black BG, Light Grey FG (0x07)
     mov rax, 0x0720072007200720
-    mov rcx, 1000 ; 4000 / 4 ? Total 80*25*2 = 4000. 4000/8 = 500
+    mov rcx, 500 ; 4000 / 4 ? Total 80*25*2 = 4000. 4000/8 = 500
     mov rcx, 500
     rep stosq
+    
+    pop rdi
+    pop rcx
+    pop rax
     ret
 
 delay_ms:
