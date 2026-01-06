@@ -71,6 +71,13 @@ play_loop:
     test rcx, rcx
     jz .silence
     
+    ; Update Debug Info (Top Right)
+    push rbx
+    push rcx
+    call print_debug_info
+    pop rcx
+    pop rbx
+    
     ; --- Sound ON ---
     mov rax, rcx ; Divisor
     
@@ -95,6 +102,13 @@ play_loop:
     jmp .wait
 
 .silence:
+    ; Update Debug (Silence)
+    push rbx
+    push rcx
+    call print_debug_info
+    pop rcx
+    pop rbx
+
     ; Speaker OFF
     in al, 0x61
     and al, 0xFC
@@ -113,6 +127,80 @@ hang:
 .halt:
     hlt
     jmp .halt
+
+; -----------------------------------------------
+; Debug Info: Prints DUR:XXXX DIV:XXXX at top right
+; Input: RBX=Dur, RCX=Div
+; -----------------------------------------------
+print_debug_info:
+    mov rdi, 0xB8000 + 120 ; Near top right
+    
+    mov rax, 0x0F520F550F44 ; "DUR"
+    mov [rdi], rax
+    add rdi, 6
+    mov word [rdi], 0x0F3A ; ":"
+    add rdi, 2
+    
+    mov rax, rbx
+    call print_hex_word
+    
+    add rdi, 2
+    mov word [rdi], 0x0F20 ; " "
+    add rdi, 2
+    
+    mov rax, 0x0F560F490F44 ; "DIV"
+    mov [rdi], rax
+    add rdi, 6
+    mov word [rdi], 0x0F3A ; ":"
+    add rdi, 2
+    
+    mov rax, rcx
+    call print_hex_word
+    ret
+
+; Print AX as 4 Hex digits to [RDI], advances RDI
+print_hex_word:
+    push rcx
+    push rax
+    
+    ; Nibble 4 (Top)
+    mov rcx, rax
+    shr rcx, 12
+    call print_nibble
+    
+    ; Nibble 3
+    mov rcx, rax
+    shr rcx, 8
+    call print_nibble
+    
+    ; Nibble 2
+    mov rcx, rax
+    shr rcx, 4
+    call print_nibble
+    
+    ; Nibble 1
+    mov rcx, rax
+    call print_nibble
+    
+    pop rax
+    pop rcx
+    ret
+
+print_nibble:
+    and rcx, 0xF
+    cmp rcx, 9
+    jle .num
+    add rcx, 'A'-10
+    jmp .write
+.num:
+    add rcx, '0'
+.write:
+    mov ah, 0x4F ; Red on White for visibility
+    mov al, cl
+    mov [rdi], ax
+    add rdi, 2
+    ret
+
 
 ; -----------------------------------------------
 ; Visualizer: Green bar based on pitch
