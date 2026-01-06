@@ -71,13 +71,6 @@ play_loop:
     test rcx, rcx
     jz .silence
     
-    ; Update Debug Info (Top Right)
-    push rbx
-    push rcx
-    call print_debug_info
-    pop rcx
-    pop rbx
-    
     ; --- Sound ON ---
     mov rax, rcx ; Divisor
     
@@ -96,24 +89,33 @@ play_loop:
     or al, 3
     out 0x61, al
     
-    ; Visualize Note
+    ; Visualize Note (Scrolls Screen)
     mov rdi, rcx
     call visualize_note
+    
+    ; Update Debug Info (Status Bar - Redraw after scroll)
+    push rbx
+    push rcx
+    call print_debug_info
+    pop rcx
+    pop rbx
+    
     jmp .wait
 
 .silence:
+    ; Speaker OFF
+    in al, 0x61
+    and al, 0xFC
+    out 0x61, al
+    
+    call scroll_screen
+    
     ; Update Debug (Silence)
     push rbx
     push rcx
     call print_debug_info
     pop rcx
     pop rbx
-
-    ; Speaker OFF
-    in al, 0x61
-    and al, 0xFC
-    out 0x61, al
-    call scroll_screen
 
 .wait:
     mov rdi, rbx
