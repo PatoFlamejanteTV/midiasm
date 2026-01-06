@@ -1,20 +1,14 @@
 all: os.img
 
-os.img: boot.bin music.bin
-	cat boot.bin music.bin > os.img
+os.img: boot.bin sonic.bin
+	cat boot.bin sonic.bin > os.img
 	truncate -s 1440k os.img
 
 boot.bin: boot.asm
 	nasm -f bin boot.asm -o boot.bin
 
-music.bin: test.mid
-	python3 midi2bin.py test.mid music.bin
-
-test.mid: generate_song.py
-	python3 generate_song.py
-
-run: os.img
-	qemu-system-x86_64 -drive format=raw,file=os.img -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
+sonic.bin: scd-Palmtree_Panic_Past.mid smart_converter.py
+	python3 smart_converter.py scd-Palmtree_Panic_Past.mid sonic.bin
 
 clean:
-	rm -f *.bin *.img *.mid
+	rm -f *.bin os.img
