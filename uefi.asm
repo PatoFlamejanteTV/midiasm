@@ -1,8 +1,10 @@
 [BITS 64]
 [ORG 0x00400000]
+default rel
 
-section_alignment  equ 4096
-file_alignment     equ 512
+IMAGE_BASE         equ 0x00400000
+SECTION_ALIGNMENT  equ 4096
+FILE_ALIGNMENT     equ 512
 
 ; PE header
 header:
@@ -22,11 +24,11 @@ header:
     dd text_size    ; SizeOfCode
     dd data_size    ; SizeOfInitializedData
     dd 0            ; SizeOfUninitializedData
-    dd entry_point  ; AddressOfEntryPoint
-    dd header       ; BaseOfCode
-    dq 0x00400000   ; ImageBase
-    dd 4096         ; SectionAlignment
-    dd 512          ; FileAlignment
+    dd entry_point - IMAGE_BASE ; AddressOfEntryPoint (RVA)
+    dd 4096         ; BaseOfCode (RVA of .text seems safest as 4096)
+    dq IMAGE_BASE   ; ImageBase
+    dd SECTION_ALIGNMENT ; SectionAlignment
+    dd FILE_ALIGNMENT    ; FileAlignment
     dw 4            ; MajorOperatingSystemVersion
     dw 0            ; MinorOperatingSystemVersion
     dw 0            ; MajorImageVersion
@@ -34,8 +36,8 @@ header:
     dw 4            ; MajorSubsystemVersion
     dw 0            ; MinorSubsystemVersion
     dd 0            ; Win32VersionValue
-    dd image_size   ; SizeOfImage
-    dd header_size  ; SizeOfHeaders
+    dd image_size   ; SizeOfImage (Aligned)
+    dd 4096         ; SizeOfHeaders (Aligned to SectionAlignment to match offset)
     dd 0            ; CheckSum
     dw 10           ; Subsystem (EFI Application)
     dw 0            ; DllCharacteristics
@@ -45,32 +47,33 @@ header:
     dq 0x1000       ; SizeOfHeapCommit
     dd 0            ; LoaderFlags
     dd 16           ; NumberOfRvaAndSizes
-    dd 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-    dd 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-
-header_size equ $ - header
+    times 128 db 0  ; Data Directories (Empty)
 
 ; Sections
+; .text
 dq ".text"
-    dd text_size    ; VirtualSize
-    dd text_start   ; VirtualAddress
-    dd text_size    ; SizeOfRawData
-    dd text_start   ; PointerToRawData
-    dd 0, 0, 0, 0
+    dd text_size                ; VirtualSize
+    dd text_start - IMAGE_BASE  ; VirtualAddress (RVA)
+    dd text_size                ; SizeOfRawData
+    dd text_start - IMAGE_BASE  ; PointerToRawData (File Offset)
+    dd 0, 0
+    dw 0, 0
     dd 0x60000020   ; Characteristics (Code | Execute | Read)
 
+; .data
 dq ".data"
-    dd data_size    ; VirtualSize
-    dd data_start   ; VirtualAddress
-    dd data_size    ; SizeOfRawData
-    dd data_start   ; PointerToRawData
-    dd 0, 0, 0, 0
+    dd data_size                ; VirtualSize
+    dd data_start - IMAGE_BASE  ; VirtualAddress (RVA)
+    dd data_size                ; SizeOfRawData
+    dd data_start - IMAGE_BASE  ; PointerToRawData (File Offset)
+    dd 0, 0
+    dw 0, 0
     dd 0xC0000040   ; Characteristics (Initialized Data | Read | Write)
 
-align 4096
+align SECTION_ALIGNMENT
 text_start:
 entry_point:
-    sub rsp, 120 ; Shadow(32) + Args(8*10) for Blt = 112 -> align 16 -> 120
+    sub rsp, 120 ; Shadow(32) + Args(8*10) - Align 16
 
     mov [ImageHandle], rcx
     mov [SystemTable], rdx
@@ -108,7 +111,7 @@ entry_point:
     mov [ColWidth], eax
 
     ; Main Loop
-    mov rsi, music_data
+    lea rsi, [music_data] ; Use LEA for PIC
 
 next_note:
     xor rax, rax
@@ -198,7 +201,7 @@ uefi_vis_update:
     mov rcx, [Gop]
     lea rdx, [BlackPixel]    ; BltBuffer (Pixel)
     mov r8, 0                ; EfiBltVideoFill
-    xor r9, r9               ; SrcX (ignored for Fill? No, offset in buffer)
+    xor r9, r9               ; SrcX
     
     mov qword [rsp+32], 0    ; SrcY
     mov qword [rsp+40], 0    ; DstX
@@ -270,9 +273,8 @@ uefi_vis_update:
 .do_draw:
 
     ; Blt Fill Note
-    ; DstX = rbx, DstY = Height-16, W = ColWidth, H = 16
     mov rcx, [Gop]
-    ; rdx is already set to Pixel
+    ; rdx is Pixel
     mov r8, 0 ; Fill
     xor r9, r9
     
@@ -292,7 +294,7 @@ uefi_vis_update:
 .ret:
     ret
 
-align 4096
+align SECTION_ALIGNMENT
 text_size equ $ - text_start
 
 data_start:
@@ -312,11 +314,11 @@ ScreenWidth dq 800
 ScreenHeight dq 600
 ColWidth dq 10
 
-; Colors (B, G, R, Res -> 0x00RRGGBB)
+; Colors (0x00RRGGBB)
 align 4
 BlackPixel dd 0x00000000
 WhitePixel dd 0x00FFFFFF
-BluePixel  dd 0x000000FF ; 0x00RRGGBB
+BluePixel  dd 0x000000FF
 GreenPixel dd 0x0000FF00
 CyanPixel  dd 0x0000FFFF
 RedPixel   dd 0x00FF0000
@@ -327,6 +329,7 @@ music_data:
     incbin "sonic.bin"
     times 16 db 0
 
-align 4096
+align SECTION_ALIGNMENT
 data_size equ $ - data_start
+
 image_size equ $ - header
