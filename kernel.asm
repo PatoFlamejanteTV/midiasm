@@ -73,6 +73,7 @@ long_mode_entry:
     out 0x40, al     ; MSB 0
 
     ; Initialize Visuals
+    call decompress_bg
     call clear_vga
 
     ; --- Main Music Loop ---
@@ -172,21 +173,46 @@ visualizer_update:
     push rdi
     push rcx
     push rax
+    push rbx
+    push rdx
 
-    ; 1. Scroll Screen Up
-    ; Move 0xB80A0 (Line 1) -> 0xB8000 (Line 0) for 24 lines
-    mov rsi, 0xB8000 + 160 ; Source: Line 1
-    mov rdi, 0xB8000       ; Dest: Line 0
-    mov rcx, 1920          ; 80 chars * 24 lines = 1920 qwords (Wait, 80*24*2=3840 bytes. 3840/8=480 qwords)
-                           ; Let's use words for safety. 80*24 = 1920 words.
+    ; 1. Scroll Screen Up (Smart Scroll: Move FG, Keep BG static)
+    ; We iterate 1920 cells (Lines 0-23)
+    mov rsi, 0xB8000 + 160 ; Source (Line 1 char)
+    mov rdi, 0xB8000       ; Dest (Line 0 char)
+    mov rbx, 0x6000        ; BG Buffer (Start at Line 0)
     mov rcx, 1920
-    rep movsw
 
-    ; 2. Clear Bottom Line
-    mov rdi, 0xB8000 + (160 * 24) ; Start of 25th line
-    mov ax, 0x0720 ; Space (0x20) with Grey (0x07)
+.scroll_loop:
+    lodsw                  ; AL=Char, AH=Attr (from Line Y+1)
+    
+    ; We want: NewChar = Char(Y+1)
+    ;          NewAttr = FG(Y+1) | BG(Y_Dest)
+    
+    mov dl, [rbx]          ; Get Static BG Color for Dest position
+    inc rbx
+    
+    shl dl, 4              ; Move to high nibble
+    and ah, 0x0F           ; Keep FG from source
+    or ah, dl              ; Combine with Static BG
+    
+    stosw
+    loop .scroll_loop
+
+    ; 2. Clear Bottom Line (Line 24)
+    ; rbx now points to start of BG Buffer for Line 24
+    ; rdi points to start of VGA Line 24
     mov rcx, 80
-    rep stosw
+.clear_btm:
+    mov dl, [rbx]          ; Get BG Color
+    inc rbx
+    
+    shl dl, 4
+    or dl, 0x07            ; Light Grey FG (Empty text color)
+    mov ah, dl
+    mov al, 0x20           ; Space Char
+    stosw
+    loop .clear_btm
 
     ; 3. Draw Note
     ; If Divisor (R9) == 0, skip
@@ -224,13 +250,31 @@ visualizer_update:
     jle .col_ok
     mov rax, 1
 .col_ok:
+    ; RAX has FG Color Index
+    
+    ; Get BG Color for this cell
+    ; Map VRAM addr back to Buffer index
+    ; Buffer Index = (VRAM - 0xB8000) / 2
+    push rbx
+    mov rbx, rdi
+    sub rbx, 0xB8000
+    shr rbx, 1
+    add rbx, 0x6000   ; 0x6000 is BG Buffer Base
+    mov dl, [rbx]     ; DL = BG Color Index
+    pop rbx
+    
+    shl dl, 4
+    and al, 0xF       ; Ensure only FG bits
+    or al, dl         ; Combine
     
     ; Write Char
     mov ah, al     ; Attribute (Color)
-    mov al, 0x01   ; smiley face, old val was 0x23   ; Char '#'
+    mov al, 0x01   ; Smiley Face
     mov [rdi], ax
 
 .done_vis:
+    pop rdx
+    pop rbx
     pop rax
     pop rcx
     pop rdi
@@ -319,9 +363,36 @@ print_hex_dbg:
 
 clear_vga:
     mov rdi, 0xB8000
-    mov ax, 0x0720
-    mov rcx, 2000 ; 80*25
-    rep stosw
+    mov rsi, 0x6000     ; BG Buffer
+    mov rcx, 2000       ; 80*25
+.cl_loop:
+    lodsb               ; Load BG Color (0-7)
+    shl al, 4           ; Shift to high nibble
+    or al, 0x07         ; Light Grey FG
+    mov ah, al          ; Attribute
+    mov al, 0x20        ; Space
+    stosw
+    loop .cl_loop
+    ret
+
+decompress_bg:
+    mov rsi, bg_data
+    mov rdi, 0x6000     ; Decompression buffer (Safe RAM)
+    xor rcx, rcx
+.decomp_loop:
+    lodsw               ; Load AL=Count, AH=Color
+    test al, al         ; Check terminator
+    jz .done
+    
+    mov cl, al          ; Count
+    mov al, ah          ; Color
+.store_run:
+    stosb               ; Buffer stores 1 byte per cell (Color Index)
+    dec cl
+    jnz .store_run
+    
+    jmp .decomp_loop
+.done:
     ret
 
 ; DATA
@@ -337,3 +408,8 @@ align 16
 music_data:
     incbin "sonic.bin"
     times 16 db 0 ; Padding/Terminator
+
+align 16
+bg_data:
+    incbin "bg.bin"
+    db 0, 0 ; Terminator

@@ -7,7 +7,10 @@ os.img: boot.bin kernel.bin
 boot.bin: boot.asm
 	nasm -f bin boot.asm -o boot.bin
 
-kernel.bin: kernel.asm sonic.bin
+bg.bin: res/sample.bmp compress_bg.py
+	python3 compress_bg.py res/sample.bmp
+
+kernel.bin: kernel.asm sonic.bin bg.bin
 	nasm -f bin kernel.asm -o kernel.bin
 
 sonic.bin: scd-Palmtree_Panic_Past.mid smart_converter.py
