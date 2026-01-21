@@ -4,24 +4,24 @@ os.img: boot.bin kernel.bin
 	cat boot.bin kernel.bin > os.img
 	truncate -s 1440k os.img
 
-boot.bin: boot.asm
-	nasm -f bin boot.asm -o boot.bin
+boot.bin: asm/boot.asm
+	nasm -f bin asm/boot.asm -o boot.bin
 
-bg.bin: res/sample.bmp compress_bg.py
-	python3 compress_bg.py res/sample.bmp
+bg.bin: res/img/sample.bmp tools/compress_bg.py
+	python3 tools/compress_bg.py res/img/sample.bmp
 
-kernel.bin: kernel.asm sonic.bin bg.bin
-	nasm -f bin kernel.asm -o kernel.bin
+kernel.bin: asm/kernel.asm sonic.bin bg.bin
+	nasm -f bin -I ./ asm/kernel.asm -o kernel.bin
 
-sonic.bin: scd-Palmtree_Panic_Past.mid smart_converter.py
-	python3 smart_converter.py scd-Palmtree_Panic_Past.mid sonic.bin
+sonic.bin: res/midi/scd-Palmtree_Panic_Past.mid tools/smart_converter.py
+	python3 tools/smart_converter.py res/midi/scd-Palmtree_Panic_Past.mid sonic.bin
 
 qemu:
 	qemu-system-x86_64 -drive format=raw,file=os.img -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
 
 
-uefi.bin: uefi.asm sonic.bin
-	nasm -f bin uefi.asm -o uefi.bin
+uefi.bin: asm/uefi.asm sonic.bin
+	nasm -f bin -I ./ asm/uefi.asm -o uefi.bin
 
 uefi.img: uefi.bin
 	dd if=/dev/zero of=uefi.img bs=1M count=64
