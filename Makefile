@@ -11,7 +11,7 @@ bg.bin: res/img/sample.bmp tools/compress_bg.py
 	python3 tools/compress_bg.py res/img/sample.bmp
 
 kernel.bin: asm/kernel.asm sonic.bin bg.bin
-	nasm -f bin -I ./ asm/kernel.asm -o kernel.bin
+	nasm -f bin -I ./ $(if $(NOISE),-DNOISE_BUILD,) asm/kernel.asm -o kernel.bin
 
 sonic.bin: res/midi/scd-Palmtree_Panic_Past.mid tools/smart_converter.py
 	python3 tools/smart_converter.py res/midi/scd-Palmtree_Panic_Past.mid sonic.bin

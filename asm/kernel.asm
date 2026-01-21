@@ -121,6 +121,22 @@ long_mode_entry:
     call visualizer_update
 
     ; --- Sound ---
+%ifdef NOISE_BUILD
+    test r9, r9
+    jz .silence_noise
+
+    ; Sound ON (Noise Mode)
+    mov rcx, r8 ; Duration
+    call play_noise_note
+    ; play_noise_note handles the delay internally
+    jmp .next_note
+
+.silence_noise:
+    mov rcx, r8
+    call pit_delay
+    jmp .next_note
+
+%else
     test r9, r9
     jz .silence
 
@@ -151,6 +167,7 @@ long_mode_entry:
     call pit_delay
     
     jmp .next_note
+%endif
 
 .hang:
     ; Turn off sound and halt
@@ -330,6 +347,95 @@ pit_delay:
 .end_delay:
     pop rcx
     ret
+
+%ifdef NOISE_BUILD
+play_noise_note:
+    ; Input: RCX = Duration (ms), R9 = Pitch Divisor
+    ; Preserves: RSI
+    push rbx
+    push rdx
+    push r14
+    push r15
+
+    ; Enable Speaker Bit 1 Control (Disable Timer 2 Gate)
+    in al, 0x61
+    and al, 0xFC
+    or al, 2      ; Initial state High
+    out 0x61, al
+    
+    xor r14, r14 ; Phase counter
+
+.n_ms_loop:
+    test rcx, rcx
+    jz .n_done
+    
+    ; Start 1ms poll
+    mov al, 0
+    out 0x43, al
+    in al, 0x40
+    mov bl, al
+    in al, 0x40
+    mov bh, al   ; BX = Start Count
+    
+    mov r15w, 1193 ; Target 1ms count
+    
+.n_poll:
+    ; Read Current
+    mov al, 0
+    out 0x43, al
+    in al, 0x40
+    mov dl, al
+    in al, 0x40
+    mov dh, al   ; DX = Current Count
+    
+    ; Elapsed = BX - DX
+    mov ax, bx
+    sub ax, dx
+    
+    cmp ax, r15w
+    jae .n_ms_done
+    
+    ; Noise Toggle Check
+    ; R9 contains Divisor (Pitch).
+    ; We check if AX (Elapsed) >= R14W (Next Toggle)
+    cmp ax, r14w
+    jb .n_poll
+    
+    ; Toggle Speaker
+    ; Use RDTSC for randomness
+    rdtsc
+    test al, 1
+    jz .n_low
+    in al, 0x61
+    or al, 2
+    out 0x61, al
+    jmp .n_set_next
+.n_low:
+    in al, 0x61
+    and al, ~2
+    out 0x61, al
+    
+.n_set_next:
+    add r14w, r9w
+    jmp .n_poll
+    
+.n_ms_done:
+    sub r14w, 1193 ; Adjust phase for next MS
+    dec rcx
+    jmp .n_ms_loop
+    
+.n_done:
+    ; Off
+    in al, 0x61
+    and al, 0xFC
+    out 0x61, al
+    
+    pop r15
+    pop r14
+    pop rdx
+    pop rbx
+    ret
+%endif
 
 print_hex_dbg:
     ; Print RAX (low 16 bits) to [RDI]
