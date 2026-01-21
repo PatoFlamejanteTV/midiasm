@@ -34,7 +34,7 @@ def compress_image(image_path, output_bin, output_preview):
         sys.exit(1)
 
     # Resize to 80x25
-    img = img.resize((80, 25), Image.Resampling.BILINEAR)
+    img = img.resize((80, 25), Image.Resampling.NEAREST)
     img = img.convert('RGB')
     
     pixels = list(img.getdata())
