@@ -358,19 +358,26 @@ play_noise_note:
     push r14
     push r15
 
-    ; Enable Speaker Bit 1 Control (Disable Timer 2 Gate)
+    ; Setup Timer 2 with the given divisor for noise generation
+    mov al, 0xB6  ; Timer 2, Mode 3 (square wave), binary mode
+    out 0x43, al
+    mov ax, r9w   ; Get divisor from R9
+    out 0x42, al  ; Low byte
+    mov al, ah
+    out 0x42, al  ; High byte
+    
+    ; Enable speaker via bit 1
     in al, 0x61
-    and al, 0xFC
-    or al, 2      ; Initial state High
+    or al, 3      ; Set bits 0 and 1 (Gate + Speaker Enable)
     out 0x61, al
     
-    xor r14, r14 ; Phase counter
+    xor r14, r14  ; Phase counter for noise variation
 
 .n_ms_loop:
     test rcx, rcx
     jz .n_done
     
-    ; Start 1ms poll
+    ; Time 1ms delay using PIT Channel 0
     mov al, 0
     out 0x43, al
     in al, 0x40
@@ -378,10 +385,10 @@ play_noise_note:
     in al, 0x40
     mov bh, al   ; BX = Start Count
     
-    mov r15w, 1193 ; Target 1ms count
+    mov r15w, 1193 ; Count for ~1ms
     
 .n_poll:
-    ; Read Current
+    ; Read current PIT count
     mov al, 0
     out 0x43, al
     in al, 0x40
@@ -389,46 +396,33 @@ play_noise_note:
     in al, 0x40
     mov dh, al   ; DX = Current Count
     
-    ; Elapsed = BX - DX
+    ; Calculate elapsed: BX - DX
     mov ax, bx
     sub ax, dx
     
+    ; Check if 1ms elapsed
     cmp ax, r15w
     jae .n_ms_done
     
-    ; Noise Toggle Check
-    ; R9 contains Divisor (Pitch).
-    ; We check if AX (Elapsed) >= R14W (Next Toggle)
+    ; Check if we should add noise variation
+    ; Use elapsed time as modulation
     cmp ax, r14w
     jb .n_poll
     
-    ; Toggle Speaker
-    ; Use RDTSC for randomness
+    ; Add some randomness to the divisor via RDTSC
     rdtsc
-    test al, 1
-    jz .n_low
-    in al, 0x61
-    or al, 2
-    out 0x61, al
-    jmp .n_set_next
-.n_low:
-    in al, 0x61
-    and al, ~2
-    out 0x61, al
-    
-.n_set_next:
-    add r14w, r9w
+    and al, 0x3F  ; Mask to get variation
+    add r14w, r9w ; Advance modulation counter
     jmp .n_poll
     
 .n_ms_done:
-    sub r14w, 1193 ; Adjust phase for next MS
     dec rcx
     jmp .n_ms_loop
     
 .n_done:
-    ; Off
+    ; Turn off speaker
     in al, 0x61
-    and al, 0xFC
+    and al, 0xFC  ; Clear bits 0 and 1
     out 0x61, al
     
     pop r15
