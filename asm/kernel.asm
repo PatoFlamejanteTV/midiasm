@@ -352,83 +352,89 @@ pit_delay:
 %ifdef NOISE_BUILD
 play_noise_note:
     ; Input: RCX = Duration (ms), R9 = Pitch Divisor
-    ; Preserves: RSI
+    ; Output: NOISE! Aggressive maximum amplitude noise generation
+    push rax
     push rbx
     push rdx
-    push r14
-    push r15
+    push rdi
 
-    ; Setup Timer 2 with the given divisor for noise generation
-    mov al, 0xB6  ; Timer 2, Mode 3 (square wave), binary mode
-    out 0x43, al
-    mov ax, r9w   ; Get divisor from R9
-    out 0x42, al  ; Low byte
-    mov al, ah
-    out 0x42, al  ; High byte
-    
-    ; Enable speaker via bit 1
+    ; Display "N" on screen as visual feedback that noise is playing
+    mov rdi, 0xB8000 + (160 * 23) + 158  ; Bottom right corner
+    mov al, 'N'
+    mov ah, 0x0F  ; White on black
+    mov [rdi], ax
+
+    ; Enable speaker bits 0 and 1 fully
     in al, 0x61
-    or al, 3      ; Set bits 0 and 1 (Gate + Speaker Enable)
+    or al, 0x03
     out 0x61, al
-    
-    xor r14, r14  ; Phase counter for noise variation
 
-.n_ms_loop:
+.noise_ms_loop:
     test rcx, rcx
-    jz .n_done
+    jz .noise_finish
     
-    ; Time 1ms delay using PIT Channel 0
+    ; Setup timer measurement
     mov al, 0
     out 0x43, al
     in al, 0x40
     mov bl, al
     in al, 0x40
-    mov bh, al   ; BX = Start Count
+    mov bh, al    ; BX = start
     
-    mov r15w, 1193 ; Count for ~1ms
-    
-.n_poll:
-    ; Read current PIT count
+.noise_inner:
+    ; Read timer
     mov al, 0
     out 0x43, al
     in al, 0x40
     mov dl, al
     in al, 0x40
-    mov dh, al   ; DX = Current Count
+    mov dh, al    ; DX = current
     
-    ; Calculate elapsed: BX - DX
     mov ax, bx
     sub ax, dx
     
-    ; Check if 1ms elapsed
-    cmp ax, r15w
-    jae .n_ms_done
+    cmp ax, 1193
+    jge .noise_next_ms
     
-    ; Check if we should add noise variation
-    ; Use elapsed time as modulation
-    cmp ax, r14w
-    jb .n_poll
+    ; Aggressive toggle: alternate speaker bit every iteration
+    ; This will cause maximum audio output regardless of divisor
+    mov al, al    ; Modify AL based on timing
+    and al, 0x10  ; Use bit 4 of timing
+    jz .noise_force_on
     
-    ; Add some randomness to the divisor via RDTSC
-    rdtsc
-    and al, 0x3F  ; Mask to get variation
-    add r14w, r9w ; Advance modulation counter
-    jmp .n_poll
+.noise_force_off:
+    ; Turn OFF
+    in al, 0x61
+    and al, 0xFE  ; Clear bit 0 (gate)
+    out 0x61, al
+    jmp .noise_inner
     
-.n_ms_done:
+.noise_force_on:
+    ; Turn ON
+    in al, 0x61
+    or al, 0x01   ; Set bit 0 (gate)
+    out 0x61, al
+    jmp .noise_inner
+    
+.noise_next_ms:
     dec rcx
-    jmp .n_ms_loop
+    jmp .noise_ms_loop
     
-.n_done:
-    ; Turn off speaker
+.noise_finish:
+    ; Clear the "N" indicator
+    mov rdi, 0xB8000 + (160 * 23) + 158  ; Bottom right corner
+    mov ax, 0x0F20  ; Space with white on black
+    mov [rdi], ax
+    
+    ; Turn off completely
     in al, 0x61
     and al, 0xFC  ; Clear bits 0 and 1
     out 0x61, al
     
-    pop r15
-    pop r14
+    pop rdi
     pop rdx
     pop rbx
+    pop rax
     ret
 %endif
 
