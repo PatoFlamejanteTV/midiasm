@@ -1,0 +1,809 @@
+     1                                  [ORG 0x8000]
+     2                                  [BITS 16]
+     3                                  
+     4                                  kernel_entry:
+     5                                      ; --- 16-bit Initialization ---
+     6 00000000 FA                          cli            ; Disable interrupts
+     7 00000001 FC                          cld            ; Clear direction flag (Forward string ops)
+     8                                  
+     9                                      ; Enable A20 Line
+    10 00000002 E492                        in al, 0x92
+    11 00000004 0C02                        or al, 2
+    12 00000006 E692                        out 0x92, al
+    13                                  
+    14                                      ; Create Page Tables (Identity Map 0-2MB) at 0x1000
+    15 00000008 BF0010                      mov di, 0x1000
+    16 0000000B 31C0                        xor ax, ax
+    17 0000000D B90010                      mov cx, 0x1000 ; Clear 4KB * 4 (enough for simple tables)
+    18 00000010 F3AA                        rep stosb
+    19                                  
+    20                                      ; PML4[0] -> PDP
+    21 00000012 66C706001003200000          mov dword [0x1000], 0x2003
+    22                                      ; PDP[0] -> PD
+    23 0000001B 66C706002003300000          mov dword [0x2000], 0x3003
+    24                                      ; PD[0] -> 2MB Page (Physical 0)
+    25 00000024 66C706003083000000          mov dword [0x3000], 0x83
+    26                                  
+    27                                      ; GDT (Global Descriptor Table)
+    28 0000002D 0F0116[1806]                lgdt [gdt_desc]
+    29                                  
+    30                                      ; Enable PAE (Physical Address Extension) in CR4
+    31 00000032 0F20E0                      mov eax, cr4
+    32 00000035 6683C820                    or eax, 1 << 5
+    33 00000039 0F22E0                      mov cr4, eax
+    34                                  
+    35                                      ; Load Page Directory Base into CR3
+    36 0000003C 66B800100000                mov eax, 0x1000
+    37 00000042 0F22D8                      mov cr3, eax
+    38                                  
+    39                                      ; Enable Long Mode in EFER MSR
+    40 00000045 66B9800000C0                mov ecx, 0xC0000080
+    41 0000004B 0F32                        rdmsr
+    42 0000004D 660D00010000                or eax, 1 << 8
+    43 00000053 0F30                        wrmsr
+    44                                  
+    45                                      ; Enable Paging (PG) and Protected Mode (PE) in CR0
+    46 00000055 0F20C0                      mov eax, cr0
+    47 00000058 660D01000080                or eax, (1 << 31) | 1
+    48 0000005E 0F22C0                      mov cr0, eax
+    49                                  
+    50                                      ; Far Jump to 64-bit Land
+    51 00000061 EA[6600]0800                jmp 0x08:long_mode_entry
+    52                                  
+    53                                  [BITS 64]
+    54                                  long_mode_entry:
+    55                                      ; --- 64-bit Initialization ---
+    56 00000066 FA                          cli
+    57 00000067 FC                          cld
+    58 00000068 BC007C0000                  mov rsp, 0x7C00  ; Stack grows down from bootloader start
+    59                                  
+    60                                      ; Load Segments
+    61 0000006D 66B81000                    mov ax, 0x10     ; Data Segment
+    62 00000071 8ED8                        mov ds, ax
+    63 00000073 8EC0                        mov es, ax
+    64 00000075 8ED0                        mov ss, ax
+    65 00000077 8EE0                        mov fs, ax
+    66 00000079 8EE8                        mov gs, ax
+    67                                  
+    68                                      ; Initialize Timer (PIT Ch0) for accurate delay
+    69 0000007B B034                        mov al, 0x34     ; Mode 2, LSB/MSB
+    70 0000007D E643                        out 0x43, al
+    71 0000007F B000                        mov al, 0
+    72 00000081 E640                        out 0x40, al     ; LSB 0
+    73 00000083 E640                        out 0x40, al     ; MSB 0
+    74                                  
+    75                                      ; Initialize Visuals
+    76                                  %ifndef NO_BG
+    77 00000085 E8EF020000                  call decompress_bg
+    78                                  %endif
+    79 0000008A E8CC020000                  call clear_vga
+    80                                  
+    81                                      ; --- Main Music Loop ---
+    82                                      ; Register Usage:
+    83                                      ; RSI: Pointer to Music Data (PERSISTENT)
+    84                                      ; R8:  Current Duration
+    85                                      ; R9:  Current Divisor
+    86                                      ; R10: Current Color/Channel
+    87                                      
+    88 0000008F 48BE-                       mov rsi, music_data
+    88 00000091 [3006000000000000] 
+    89                                  
+    90                                  .next_note:
+    91                                      ; Read Duration (2 bytes)
+    92 00000099 4831C0                      xor rax, rax
+    93 0000009C 66AD                        lodsw
+    94 0000009E 4989C0                      mov r8, rax
+    95                                  
+    96                                      ; Read Divisor (2 bytes)
+    97 000000A1 66AD                        lodsw
+    98 000000A3 4989C1                      mov r9, rax
+    99                                  
+   100                                      ; Read Channel/Color (2 bytes) - New Format
+   101 000000A6 66AD                        lodsw
+   102 000000A8 4989C2                      mov r10, rax
+   103                                  
+   104                                      ; Check for Terminator (All Zero)
+   105 000000AB 4C89C0                      mov rax, r8
+   106 000000AE 4C09C8                      or rax, r9
+   107 000000B1 4C09D0                      or rax, r10
+   108 000000B4 7461                        jz .hang
+   109                                  
+   110                                      ; --- Debug Output (Safe Mode) ---
+   111                                      ; Print raw values to top left to prove we are reading correct data
+   112 000000B6 BF00800B00                  mov rdi, 0xB8000
+   113 000000BB 4C89C0                      mov rax, r8
+   114 000000BE E869020000                  call print_hex_dbg
+   115 000000C3 4883C702                    add rdi, 2
+   116 000000C7 4C89C8                      mov rax, r9
+   117 000000CA E85D020000                  call print_hex_dbg
+   118 000000CF 4883C702                    add rdi, 2
+   119 000000D3 4C89D0                      mov rax, r10
+   120 000000D6 E851020000                  call print_hex_dbg
+   121                                  
+   122                                      ; --- Visualizer (Scroll & Draw) ---
+   123 000000DB E840000000                  call visualizer_update
+   124                                  
+   125                                      ; --- Display Note Name ---
+   126                                      ; Only show if there's a note playing (R9 != 0)
+   127 000000E0 4983F900                    cmp r9, 0
+   128 000000E4 7405                        je .skip_note_display
+   129 000000E6 E8F0010000                  call display_current_note
+   130                                  .skip_note_display:
+   131                                  
+   132                                      ; --- Sound ---
+   133 000000EB 4D85C9                      test r9, r9
+   134 000000EE 7417                        jz .silence
+   135                                  
+   136                                  %ifdef NOISE_BUILD
+   137                                      ; Noise Mode (All sounds as noise)
+   138                                      mov rcx, r8 ; Duration
+   139                                      call play_noise_note
+   140                                      ; play_noise_note handles the delay internally
+   141                                      jmp .next_note
+   142                                  %else
+   143                                      ; Regular tone mode
+   144                                      ; Sound ON
+   145 000000F0 4C89C8                      mov rax, r9
+   146 000000F3 50                          push rax
+   147 000000F4 B0B6                        mov al, 0xB6
+   148 000000F6 E643                        out 0x43, al
+   149 000000F8 58                          pop rax
+   150 000000F9 E642                        out 0x42, al
+   151 000000FB 88E0                        mov al, ah
+   152 000000FD E642                        out 0x42, al
+   153                                      
+   154 000000FF E461                        in al, 0x61
+   155 00000101 0C03                        or al, 3
+   156 00000103 E661                        out 0x61, al
+   157 00000105 EB06                        jmp .wait_dur
+   158                                  
+   159                                  .silence:
+   160                                      ; Sound OFF
+   161 00000107 E461                        in al, 0x61
+   162 00000109 24FC                        and al, 0xFC
+   163 0000010B E661                        out 0x61, al
+   164                                  %endif
+   165                                  
+   166                                  .wait_dur:
+   167                                      ; Delay using PIT
+   168 0000010D 4C89C1                      mov rcx, r8
+   169 00000110 E8D4000000                  call pit_delay
+   170                                      
+   171 00000115 EB82                        jmp .next_note
+   172                                  
+   173                                  .hang:
+   174                                      ; Turn off sound and halt
+   175 00000117 E461                        in al, 0x61
+   176 00000119 24FC                        and al, 0xFC
+   177 0000011B E661                        out 0x61, al
+   178 0000011D F4                          hlt
+   179 0000011E EBF7                        jmp .hang
+   180                                  
+   181                                  ; -------------------------------------------------------------
+   182                                  ; SUBROUTINES (Must preserve RSI, R8, R9, R10)
+   183                                  ; -------------------------------------------------------------
+   184                                  
+   185                                  visualizer_update:
+   186                                      ; Save Critical Registers
+   187 00000120 56                          push rsi
+   188 00000121 4150                        push r8
+   189 00000123 4151                        push r9
+   190 00000125 4152                        push r10
+   191 00000127 57                          push rdi
+   192 00000128 51                          push rcx
+   193 00000129 50                          push rax
+   194 0000012A 53                          push rbx
+   195 0000012B 52                          push rdx
+   196                                  
+   197                                      ; 1. Scroll Screen Up (Smart Scroll: Move FG, Keep BG static)
+   198                                      ; We iterate 1920 cells (Lines 0-23)
+   199 0000012C BEA0800B00                  mov rsi, 0xB8000 + 160 ; Source (Line 1 char)
+   200 00000131 BF00800B00                  mov rdi, 0xB8000       ; Dest (Line 0 char)
+   201 00000136 BB00600000                  mov rbx, 0x6000        ; BG Buffer (Start at Line 0)
+   202 0000013B B980070000                  mov rcx, 1920
+   203                                  
+   204                                  .scroll_loop:
+   205 00000140 66AD                        lodsw                  ; AL=Char, AH=Attr (from Line Y+1)
+   206                                      
+   207                                      ; We want: NewChar = Char(Y+1)
+   208                                      ;          NewAttr = FG(Y+1) | BG(Y_Dest)
+   209                                      
+   210 00000142 8A13                        mov dl, [rbx]          ; Get Static BG Color for Dest position
+   211 00000144 48FFC3                      inc rbx
+   212                                      
+   213 00000147 C0E204                      shl dl, 4              ; Move to high nibble
+   214 0000014A 80E40F                      and ah, 0x0F           ; Keep FG from source
+   215 0000014D 08D4                        or ah, dl              ; Combine with Static BG
+   216                                      
+   217 0000014F 66AB                        stosw
+   218 00000151 E2ED                        loop .scroll_loop
+   219                                  
+   220                                      ; 2. Clear Bottom Line (Line 24)
+   221                                      ; rbx now points to start of BG Buffer for Line 24
+   222                                      ; rdi points to start of VGA Line 24
+   223 00000153 B950000000                  mov rcx, 80
+   224                                  .clear_btm:
+   225 00000158 8A13                        mov dl, [rbx]          ; Get BG Color
+   226 0000015A 48FFC3                      inc rbx
+   227                                      
+   228 0000015D C0E204                      shl dl, 4
+   229 00000160 80CA07                      or dl, 0x07            ; Light Grey FG (Empty text color)
+   230 00000163 88D4                        mov ah, dl
+   231 00000165 B020                        mov al, 0x20           ; Space Char
+   232 00000167 66AB                        stosw
+   233 00000169 E2ED                        loop .clear_btm
+   234                                  
+   235                                      ; 3. Draw Note
+   236                                      ; If Divisor (R9) == 0, skip
+   237 0000016B 4983F900                    cmp r9, 0
+   238 0000016F 746B                        je .done_vis
+   239                                  
+   240                                      ; Calculate Position
+   241                                      ; Pos = 79 - (Divisor / 128)
+   242 00000171 4C89C8                      mov rax, r9
+   243 00000174 48C1E807                    shr rax, 7 ; /128
+   244 00000178 BB4F000000                  mov rbx, 79
+   245 0000017D 4829C3                      sub rbx, rax
+   246                                      
+   247                                      ; Clamp 0-79
+   248 00000180 4883FB00                    cmp rbx, 0
+   249 00000184 7D05                        jge .c1
+   250 00000186 BB00000000                  mov rbx, 0
+   251                                  .c1:
+   252 0000018B 4883FB4F                    cmp rbx, 79
+   253 0000018F 7E05                        jle .c2
+   254 00000191 BB4F000000                  mov rbx, 79
+   255                                  .c2:
+   256                                      
+   257                                      ; Address = Start of Bottom Line + (Pos * 2)
+   258 00000196 BF008F0B00                  mov rdi, 0xB8000 + (160 * 24)
+   259 0000019B 48D1E3                      shl rbx, 1
+   260 0000019E 4801DF                      add rdi, rbx
+   261                                      
+   262                                      ; Determine Color from Channel (R10)
+   263 000001A1 4C89D0                      mov rax, r10
+   264 000001A4 4883E00F                    and rax, 0xF ; 0-15
+   265 000001A8 48FFC0                      inc rax      ; 1-16
+   266                                      ; If > 15, default to 1 (Blue)
+   267 000001AB 4883F80F                    cmp rax, 15
+   268 000001AF 7E05                        jle .col_ok
+   269 000001B1 B801000000                  mov rax, 1
+   270                                  .col_ok:
+   271                                      ; RAX has FG Color Index
+   272                                      
+   273                                      ; Get BG Color for this cell
+   274                                      ; Map VRAM addr back to Buffer index
+   275                                      ; Buffer Index = (VRAM - 0xB8000) / 2
+   276 000001B6 53                          push rbx
+   277 000001B7 4889FB                      mov rbx, rdi
+   278 000001BA 4881EB00800B00              sub rbx, 0xB8000
+   279 000001C1 48D1EB                      shr rbx, 1
+   280 000001C4 4881C300600000              add rbx, 0x6000   ; 0x6000 is BG Buffer Base
+   281 000001CB 8A13                        mov dl, [rbx]     ; DL = BG Color Index
+   282 000001CD 5B                          pop rbx
+   283                                      
+   284 000001CE C0E204                      shl dl, 4
+   285 000001D1 240F                        and al, 0xF       ; Ensure only FG bits
+   286 000001D3 08D0                        or al, dl         ; Combine
+   287                                      
+   288                                      ; Write Char
+   289 000001D5 88C4                        mov ah, al     ; Attribute (Color)
+   290 000001D7 B001                        mov al, 0x01   ; Smiley Face
+   291 000001D9 668907                      mov [rdi], ax
+   292                                  
+   293                                  .done_vis:
+   294 000001DC 5A                          pop rdx
+   295 000001DD 5B                          pop rbx
+   296 000001DE 58                          pop rax
+   297 000001DF 59                          pop rcx
+   298 000001E0 5F                          pop rdi
+   299 000001E1 415A                        pop r10
+   300 000001E3 4159                        pop r9
+   301 000001E5 4158                        pop r8
+   302 000001E7 5E                          pop rsi
+   303 000001E8 C3                          ret
+   304                                  
+   305                                  pit_delay:
+   306                                      ; Input: RCX = Milliseconds
+   307                                      ; Uses: RAX, RDX
+   308 000001E9 51                          push rcx
+   309                                  .ms_loop:
+   310 000001EA 4885C9                      test rcx, rcx
+   311 000001ED 7439                        jz .end_delay
+   312                                  
+   313                                      ; Setup PIT for ~1ms wait check
+   314                                      ; Ideally we poll, but let's just loop a safe amount of RDTSC or simplified polling
+   315                                      ; Polling PIT count:
+   316 000001EF 51                          push rcx
+   317                                      
+   318 000001F0 B000                        mov al, 0
+   319 000001F2 E643                        out 0x43, al ; Latch
+   320 000001F4 E440                        in al, 0x40
+   321 000001F6 88C3                        mov bl, al
+   322 000001F8 E440                        in al, 0x40
+   323 000001FA 88C7                        mov bh, al   ; BX = Start Count
+   324                                      
+   325 000001FC 66BAA904                    mov dx, 1193
+   326 00000200 664189D2                    mov r10w, dx ; Target
+   327                                  
+   328                                  .poll:
+   329 00000204 B000                        mov al, 0
+   330 00000206 E643                        out 0x43, al
+   331 00000208 E440                        in al, 0x40
+   332 0000020A 88C1                        mov cl, al
+   333 0000020C E440                        in al, 0x40
+   334 0000020E 88C5                        mov ch, al
+   335                                      
+   336 00000210 6689D8                      mov ax, bx
+   337 00000213 6629C8                      sub ax, cx
+   338 00000216 664439D0                    cmp ax, r10w
+   339 0000021A 72E8                        jb .poll
+   340                                      
+   341 0000021C 59                          pop rcx
+   342 0000021D 48FFC9                      dec rcx
+   343 00000220 EBC8                        jmp .ms_loop
+   344 00000222 59                          pop rcx
+   345 00000223 48FFC9                      dec rcx
+   346 00000226 EBC2                        jmp .ms_loop
+   347                                  
+   348                                  .end_delay:
+   349 00000228 59                          pop rcx
+   350 00000229 C3                          ret
+   351                                  
+   352                                  %ifdef NOISE_BUILD
+   353                                  play_noise_note:
+   354                                      ; Input: RCX = Duration (ms), R9 = Pitch Divisor
+   355                                      ; Preserves: RSI
+   356                                      push rbx
+   357                                      push rdx
+   358                                      push r14
+   359                                      push r15
+   360                                  
+   361                                      ; Enable Speaker Bit 1 Control (Disable Timer 2 Gate)
+   362                                      in al, 0x61
+   363                                      and al, 0xFC
+   364                                      or al, 2      ; Initial state High
+   365                                      out 0x61, al
+   366                                      
+   367                                      xor r14, r14 ; Phase counter
+   368                                  
+   369                                  .n_ms_loop:
+   370                                      test rcx, rcx
+   371                                      jz .n_done
+   372                                      
+   373                                      ; Start 1ms poll
+   374                                      mov al, 0
+   375                                      out 0x43, al
+   376                                      in al, 0x40
+   377                                      mov bl, al
+   378                                      in al, 0x40
+   379                                      mov bh, al   ; BX = Start Count
+   380                                      
+   381                                      mov r15w, 1193 ; Target 1ms count
+   382                                      
+   383                                  .n_poll:
+   384                                      ; Read Current
+   385                                      mov al, 0
+   386                                      out 0x43, al
+   387                                      in al, 0x40
+   388                                      mov dl, al
+   389                                      in al, 0x40
+   390                                      mov dh, al   ; DX = Current Count
+   391                                      
+   392                                      ; Elapsed = BX - DX
+   393                                      mov ax, bx
+   394                                      sub ax, dx
+   395                                      
+   396                                      cmp ax, r15w
+   397                                      jae .n_ms_done
+   398                                      
+   399                                      ; Noise Toggle Check
+   400                                      ; R9 contains Divisor (Pitch).
+   401                                      ; We check if AX (Elapsed) >= R14W (Next Toggle)
+   402                                      cmp ax, r14w
+   403                                      jb .n_poll
+   404                                      
+   405                                      ; Toggle Speaker
+   406                                      ; Use RDTSC for randomness
+   407                                      rdtsc
+   408                                      test al, 1
+   409                                      jz .n_low
+   410                                      in al, 0x61
+   411                                      or al, 2
+   412                                      out 0x61, al
+   413                                      jmp .n_set_next
+   414                                  .n_low:
+   415                                      in al, 0x61
+   416                                      and al, ~2
+   417                                      out 0x61, al
+   418                                      
+   419                                  .n_set_next:
+   420                                      add r14w, r9w
+   421                                      jmp .n_poll
+   422                                      
+   423                                  .n_ms_done:
+   424                                      sub r14w, 1193 ; Adjust phase for next MS
+   425                                      dec rcx
+   426                                      jmp .n_ms_loop
+   427                                      
+   428                                  .n_done:
+   429                                      ; Off
+   430                                      in al, 0x61
+   431                                      and al, 0xFC
+   432                                      out 0x61, al
+   433                                      
+   434                                      pop r15
+   435                                      pop r14
+   436                                      pop rdx
+   437                                      pop rbx
+   438                                      ret
+   439                                  %endif
+   440                                  
+   441                                  ; Divisor to MIDI Note conversion
+   442                                  ; Input: R9 = PIT Divisor
+   443                                  ; Output: RAX = MIDI Note Number (0-127)
+   444                                  ; The formula: divisor = 1193180 / freq, freq = 440 * 2^((note-69)/12)
+   445                                  ; We reverse this: note = 69 + 12 * log2(1193180 / (divisor * 440))
+   446                                  ; Using a lookup table for approximation
+   447                                  divisor_to_note:
+   448 0000022A 53                          push rbx
+   449 0000022B 51                          push rcx
+   450 0000022C 52                          push rdx
+   451 0000022D 4153                        push r11
+   452                                      
+   453                                      ; Clamp divisor to valid range (100 - 12000)
+   454 0000022F 4C89C8                      mov rax, r9
+   455 00000232 4883F864                    cmp rax, 100
+   456 00000236 7D05                        jge .div_ok1
+   457 00000238 B864000000                  mov rax, 100
+   458                                  .div_ok1:
+   459 0000023D 483DE02E0000                cmp rax, 12000
+   460 00000243 7E05                        jle .div_ok2
+   461 00000245 B8E02E0000                  mov rax, 12000
+   462                                  .div_ok2:
+   463                                      
+   464                                      ; Use binary search on lookup table
+   465                                      ; Table is in descending order of divisors (higher notes = lower divisors)
+   466                                      ; 84 entries: indices 0-83, corresponding to notes 36-119
+   467 0000024A 4989C3                      mov r11, rax ; r11 = target divisor
+   468 0000024D 4831DB                      xor rbx, rbx ; low = 0
+   469 00000250 B954000000                  mov rcx, 84  ; high = 84
+   470                                      
+   471                                  .binary_search:
+   472 00000255 4839CB                      cmp rbx, rcx
+   473 00000258 7D2B                        jge .search_done
+   474                                      
+   475                                      ; mid = (low + high) / 2
+   476 0000025A 4889D8                      mov rax, rbx
+   477 0000025D 4801C8                      add rax, rcx
+   478 00000260 48D1E8                      shr rax, 1   ; rax = mid
+   479                                      
+   480                                      ; Get divisor at [note_table + mid*8]
+   481 00000263 48BA-                       mov rdx, note_table
+   481 00000265 [B803000000000000] 
+   482 0000026D 4C8B14C2                    mov r10, [rdx + rax*8] ; r10 = table[mid]
+   483                                      
+   484                                      ; Compare table[mid] with target
+   485 00000271 4D39DA                      cmp r10, r11
+   486 00000274 740F                        je .search_done     ; Exact match
+   487 00000276 7C08                        jl .search_left     ; table[mid] < target, search left
+   488                                      
+   489                                      ; table[mid] > target, search right
+   490 00000278 4889C3                      mov rbx, rax
+   491 0000027B 48FFC3                      inc rbx
+   492 0000027E EBD5                        jmp .binary_search
+   493                                      
+   494                                  .search_left:
+   495                                      ; table[mid] < target, search left
+   496 00000280 4889C1                      mov rcx, rax
+   497 00000283 EBD0                        jmp .binary_search
+   498                                      
+   499                                  .search_done:
+   500                                      ; RAX now contains the index, which maps to note (36 + rax)
+   501 00000285 4883C024                    add rax, 36 ; Base note is C2 (MIDI note 36)
+   502                                      
+   503 00000289 415B                        pop r11
+   504 0000028B 5A                          pop rdx
+   505 0000028C 59                          pop rcx
+   506 0000028D 5B                          pop rbx
+   507 0000028E C3                          ret
+   508                                  
+   509                                  ; Get note name string from MIDI note number
+   510                                  ; Input: RAX = MIDI Note Number (0-127)
+   511                                  ; Output: RDI points to 3-byte string in buffer (note_buffer)
+   512                                  ; Preserves all except RDI
+   513                                  get_note_name:
+   514 0000028F 50                          push rax
+   515 00000290 53                          push rbx
+   516 00000291 51                          push rcx
+   517                                      
+   518                                      ; RDI = note_buffer (will write to it)
+   519 00000292 48BF-                       mov rdi, note_buffer
+   519 00000294 [F805000000000000] 
+   520                                      
+   521                                      ; RAX = Note Number
+   522 0000029C 4889C3                      mov rbx, rax
+   523                                      
+   524                                      ; Calculate octave = note / 12
+   525 0000029F 4889D8                      mov rax, rbx
+   526 000002A2 4831D2                      xor rdx, rdx
+   527 000002A5 B90C000000                  mov rcx, 12
+   528 000002AA 48F7F1                      div rcx
+   529 000002AD 4989C0                      mov r8, rax ; r8 = octave
+   530 000002B0 4989D1                      mov r9, rdx ; r9 = note within octave (0-11)
+   531                                      
+   532                                      ; Get note name from table
+   533 000002B3 4C89C8                      mov rax, r9
+   534 000002B6 48BE-                       mov rsi, note_names
+   534 000002B8 [9D03000000000000] 
+   535 000002C0 4801C6                      add rsi, rax ; each note name is 2 bytes
+   536                                      
+   537                                      ; Copy first character
+   538 000002C3 AC                          lodsb
+   539 000002C4 AA                          stosb
+   540                                      
+   541                                      ; Get second character (or space for natural notes)
+   542 000002C5 AC                          lodsb
+   543 000002C6 AA                          stosb
+   544                                      
+   545                                      ; Add octave digit
+   546 000002C7 4488C0                      mov al, r8b
+   547 000002CA 0430                        add al, '0'
+   548 000002CC AA                          stosb
+   549                                      
+   550 000002CD 48BF-                       mov rdi, note_buffer
+   550 000002CF [F805000000000000] 
+   551                                      
+   552 000002D7 59                          pop rcx
+   553 000002D8 5B                          pop rbx
+   554 000002D9 58                          pop rax
+   555 000002DA C3                          ret
+   556                                  
+   557                                  ; Display current note as overlay
+   558                                  ; Input: R9 = PIT Divisor
+   559                                  ; Preserves: RSI, R8, R9, R10
+   560                                  display_current_note:
+   561 000002DB 56                          push rsi
+   562 000002DC 4150                        push r8
+   563 000002DE 4151                        push r9
+   564 000002E0 4152                        push r10
+   565 000002E2 50                          push rax
+   566 000002E3 57                          push rdi
+   567 000002E4 51                          push rcx
+   568 000002E5 53                          push rbx
+   569 000002E6 52                          push rdx
+   570                                      
+   571                                      ; Only if not silence (R9 != 0)
+   572 000002E7 4D85C9                      test r9, r9
+   573 000002EA 7433                        jz .done_display
+   574                                      
+   575                                      ; Convert divisor to note
+   576 000002EC E839FFFFFF                  call divisor_to_note
+   577                                      
+   578                                      ; Get note name (output to note_buffer)
+   579 000002F1 E899FFFFFF                  call get_note_name
+   580                                      
+   581                                      ; Display at top-left corner (position 0 on line 0)
+   582 000002F6 BF00800B00                  mov rdi, 0xB8000
+   583 000002FB 48BE-                       mov rsi, note_buffer
+   583 000002FD [F805000000000000] 
+   584                                      
+   585                                      ; Print first character (note name)
+   586 00000305 AC                          lodsb
+   587 00000306 B40F                        mov ah, 0x0F ; White on Black
+   588 00000308 668907                      mov [rdi], ax
+   589 0000030B 4883C702                    add rdi, 2
+   590                                      
+   591                                      ; Print second character (sharp or natural)
+   592 0000030F AC                          lodsb
+   593 00000310 B40F                        mov ah, 0x0F
+   594 00000312 668907                      mov [rdi], ax
+   595 00000315 4883C702                    add rdi, 2
+   596                                      
+   597                                      ; Print octave
+   598 00000319 AC                          lodsb
+   599 0000031A B40F                        mov ah, 0x0F
+   600 0000031C 668907                      mov [rdi], ax
+   601                                      
+   602                                  .done_display:
+   603 0000031F 5A                          pop rdx
+   604 00000320 5B                          pop rbx
+   605 00000321 59                          pop rcx
+   606 00000322 5F                          pop rdi
+   607 00000323 58                          pop rax
+   608 00000324 415A                        pop r10
+   609 00000326 4159                        pop r9
+   610 00000328 4158                        pop r8
+   611 0000032A 5E                          pop rsi
+   612 0000032B C3                          ret
+   613                                  
+   614                                  print_hex_dbg:
+   615                                      ; Print RAX (low 16 bits) to [RDI]
+   616 0000032C 50                          push rax
+   617 0000032D 53                          push rbx
+   618 0000032E 51                          push rcx
+   619                                      
+   620 0000032F 4889C3                      mov rbx, rax
+   621 00000332 B904000000                  mov rcx, 4 ; 4 digits
+   622                                  .digit_loop:
+   623 00000337 66C1C304                    rol bx, 4
+   624 0000033B 88D8                        mov al, bl
+   625 0000033D 240F                        and al, 0xF
+   626 0000033F 3C09                        cmp al, 9
+   627 00000341 7E04                        jle .is_num
+   628 00000343 0437                        add al, 'A'-10
+   629 00000345 EB02                        jmp .store
+   630                                  .is_num:
+   631 00000347 0430                        add al, '0'
+   632                                  .store:
+   633 00000349 B40F                        mov ah, 0x0F ; White on Black
+   634 0000034B 668907                      mov [rdi], ax
+   635 0000034E 4883C702                    add rdi, 2
+   636 00000352 48FFC9                      dec rcx
+   637 00000355 75E0                        jnz .digit_loop
+   638                                      
+   639 00000357 59                          pop rcx
+   640 00000358 5B                          pop rbx
+   641 00000359 58                          pop rax
+   642 0000035A C3                          ret
+   643                                  
+   644                                  clear_vga:
+   645 0000035B BF00800B00                  mov rdi, 0xB8000
+   646 00000360 BE00600000                  mov rsi, 0x6000     ; BG Buffer
+   647 00000365 B9D0070000                  mov rcx, 2000       ; 80*25
+   648                                  .cl_loop:
+   649 0000036A AC                          lodsb               ; Load BG Color (0-7)
+   650 0000036B C0E004                      shl al, 4           ; Shift to high nibble
+   651 0000036E 0C07                        or al, 0x07         ; Light Grey FG
+   652 00000370 88C4                        mov ah, al          ; Attribute
+   653 00000372 B020                        mov al, 0x20        ; Space
+   654 00000374 66AB                        stosw
+   655 00000376 E2F2                        loop .cl_loop
+   656 00000378 C3                          ret
+   657                                  
+   658                                  decompress_bg:
+   659 00000379 48BE-                       mov rsi, bg_data
+   659 0000037B [600B000000000000] 
+   660 00000383 BF00600000                  mov rdi, 0x6000     ; Decompression buffer (Safe RAM)
+   661 00000388 4831C9                      xor rcx, rcx
+   662                                  .decomp_loop:
+   663 0000038B 66AD                        lodsw               ; Load AL=Count, AH=Color
+   664 0000038D 84C0                        test al, al         ; Check terminator
+   665 0000038F 740B                        jz .done
+   666                                      
+   667 00000391 88C1                        mov cl, al          ; Count
+   668 00000393 88E0                        mov al, ah          ; Color
+   669                                  .store_run:
+   670 00000395 AA                          stosb               ; Buffer stores 1 byte per cell (Color Index)
+   671 00000396 FEC9                        dec cl
+   672 00000398 75FB                        jnz .store_run
+   673                                      
+   674 0000039A EBEF                        jmp .decomp_loop
+   675                                  .done:
+   676 0000039C C3                          ret
+   677                                  
+   678                                  ; DATA
+   679                                  ; Note names table: 12 notes * 2 bytes each (C, C#, D, D#, E, F, F#, G, G#, A, A#, B)
+   680                                  note_names:
+   681 0000039D 4320                        db 'C', ' ' ; C natural
+   682 0000039F 4323                        db 'C', '#' ; C#
+   683 000003A1 4420                        db 'D', ' ' ; D natural
+   684 000003A3 4423                        db 'D', '#' ; D#
+   685 000003A5 4520                        db 'E', ' ' ; E natural
+   686 000003A7 4620                        db 'F', ' ' ; F natural
+   687 000003A9 4623                        db 'F', '#' ; F#
+   688 000003AB 4720                        db 'G', ' ' ; G natural
+   689 000003AD 4723                        db 'G', '#' ; G#
+   690 000003AF 4120                        db 'A', ' ' ; A natural
+   691 000003B1 4123                        db 'A', '#' ; A#
+   692 000003B3 4220                        db 'B', ' ' ; B natural
+   693                                  
+   694                                  ; Lookup table: PIT divisors for each semitone from C2 (note 36) to B7 (note 119)
+   695                                  ; Divisor = 1193180 / frequency
+   696                                  ; Frequency = 440 * 2^((note - 69) / 12)
+   697                                  ; 84 entries total (C2 to B7)
+   698                                  ; Table is in DESCENDING order of divisors (ascending order of frequencies/pitches)
+   699 000003B5 90<rep 3h>              align 8
+   700                                  note_table:
+   701                                      ; C2 (36) to B2 (47)
+   702 000003B8 A02E000000000000            dq 11936  ; C2 (65.41 Hz)
+   703 000003C0 062C000000000000            dq 11270  ; C#2
+   704 000003C8 9029000000000000            dq 10640  ; D2
+   705 000003D0 3727000000000000            dq 10039  ; D#2
+   706 000003D8 0225000000000000            dq 9474   ; E2
+   707 000003E0 EC22000000000000            dq 8940   ; F2
+   708 000003E8 F520000000000000            dq 8437   ; F#2
+   709 000003F0 181F000000000000            dq 7960   ; G2
+   710 000003F8 571D000000000000            dq 7511   ; G#2
+   711 00000400 AF1B000000000000            dq 7087   ; A2 (110 Hz)
+   712 00000408 1E1A000000000000            dq 6686   ; A#2
+   713 00000410 A118000000000000            dq 6305   ; B2
+   714                                      ; C3 (48) to B3 (59)
+   715 00000418 4017000000000000            dq 5952   ; C3
+   716 00000420 F415000000000000            dq 5620   ; C#3
+   717 00000428 B914000000000000            dq 5305   ; D3
+   718 00000430 8D13000000000000            dq 5005   ; D#3
+   719 00000438 7012000000000000            dq 4720   ; E3
+   720 00000440 6711000000000000            dq 4455   ; F3
+   721 00000448 6C10000000000000            dq 4204   ; F#3
+   722 00000450 800F000000000000            dq 3968   ; G3
+   723 00000458 A30E000000000000            dq 3747   ; G#3
+   724 00000460 D00D000000000000            dq 3536   ; A3
+   725 00000468 090D000000000000            dq 3337   ; A#3
+   726 00000470 4D0C000000000000            dq 3149   ; B3
+   727                                      ; C4 (60) to B4 (71)
+   728 00000478 9D0B000000000000            dq 2973   ; C4 (middle C, 261.63 Hz)
+   729 00000480 F60A000000000000            dq 2806   ; C#4
+   730 00000488 5A0A000000000000            dq 2650   ; D4
+   731 00000490 C409000000000000            dq 2500   ; D#4
+   732 00000498 3709000000000000            dq 2359   ; E4
+   733 000004A0 B308000000000000            dq 2227   ; F4
+   734 000004A8 3508000000000000            dq 2101   ; F#4
+   735 000004B0 C007000000000000            dq 1984   ; G4
+   736 000004B8 5207000000000000            dq 1874   ; G#4
+   737 000004C0 EA06000000000000            dq 1770   ; A4 (440 Hz - concert pitch)
+   738 000004C8 8606000000000000            dq 1670   ; A#4
+   739 000004D0 2706000000000000            dq 1575   ; B4
+   740                                      ; C5 (72) to B5 (83)
+   741 000004D8 CD05000000000000            dq 1485   ; C5
+   742 000004E0 7A05000000000000            dq 1402   ; C#5
+   743 000004E8 2C05000000000000            dq 1324   ; D5
+   744 000004F0 E204000000000000            dq 1250   ; D#5
+   745 000004F8 9C04000000000000            dq 1180   ; E5
+   746 00000500 5904000000000000            dq 1113   ; F5
+   747 00000508 1A04000000000000            dq 1050   ; F#5
+   748 00000510 E003000000000000            dq 992    ; G5
+   749 00000518 A803000000000000            dq 936    ; G#5
+   750 00000520 7303000000000000            dq 883    ; A5
+   751 00000528 4103000000000000            dq 833    ; A#5
+   752 00000530 1203000000000000            dq 786    ; B5
+   753                                      ; C6 (84) to B6 (95)
+   754 00000538 E602000000000000            dq 742    ; C6
+   755 00000540 BC02000000000000            dq 700    ; C#6
+   756 00000548 9502000000000000            dq 661    ; D6
+   757 00000550 7002000000000000            dq 624    ; D#6
+   758 00000558 4D02000000000000            dq 589    ; E6
+   759 00000560 2C02000000000000            dq 556    ; F6
+   760 00000568 0C02000000000000            dq 524    ; F#6
+   761 00000570 EF01000000000000            dq 495    ; G6
+   762 00000578 D301000000000000            dq 467    ; G#6
+   763 00000580 B901000000000000            dq 441    ; A6
+   764 00000588 A001000000000000            dq 416    ; A#6
+   765 00000590 8801000000000000            dq 392    ; B6
+   766                                      ; C7 (96) to B7 (107)
+   767 00000598 7201000000000000            dq 370    ; C7
+   768 000005A0 5D01000000000000            dq 349    ; C#7
+   769 000005A8 4A01000000000000            dq 330    ; D7
+   770 000005B0 3701000000000000            dq 311    ; D#7
+   771 000005B8 2601000000000000            dq 294    ; E7
+   772 000005C0 1501000000000000            dq 277    ; F7
+   773 000005C8 0601000000000000            dq 262    ; F#7
+   774 000005D0 F700000000000000            dq 247    ; G7
+   775 000005D8 E900000000000000            dq 233    ; G#7
+   776 000005E0 DC00000000000000            dq 220    ; A7
+   777 000005E8 D000000000000000            dq 208    ; A#7
+   778 000005F0 C400000000000000            dq 196    ; B7
+   779                                  
+   780                                  ; Temporary buffer for note name string (3 bytes: 2 chars + octave)
+   781                                  align 4
+   782 000005F8 000000                  note_buffer: db 0, 0, 0
+   783                                  
+   784 000005FB 90<rep 5h>              align 8
+   785 00000600 0000000000000000        gdt_start: dq 0
+   786 00000608 00000000009A2000        gdt_code: dq 0x00209A0000000000
+   787 00000610 0000000000920000        gdt_data: dq 0x0000920000000000
+   788                                  gdt_end:
+   789 00000618 1700                    gdt_desc: dw gdt_end - gdt_start - 1
+   790 0000061A [0006000000000000]                dq gdt_start
+   791                                  
+   792 00000622 90<rep Eh>              align 16
+   793                                  music_data:
+   794 00000630 <bin 516h>                  incbin "ba.bin"
+   795 00000B46 00<rep 10h>                 times 16 db 0 ; Padding/Terminator
+   796                                  
+   797 00000B56 90<rep Ah>              align 16
+   798                                  bg_data:
+   799                                  %ifndef NO_BG
+   800 00000B60 <bin 19Ch>                  incbin "bg.bin"
+   801                                  %endif
+   802 00000CFC 0000                        db 0, 0 ; Terminator

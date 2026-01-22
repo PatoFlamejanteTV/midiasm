@@ -122,6 +122,13 @@ long_mode_entry:
     ; --- Visualizer (Scroll & Draw) ---
     call visualizer_update
 
+    ; --- Display Note Name ---
+    ; Only show if there's a note playing (R9 != 0)
+    cmp r9, 0
+    je .skip_note_display
+    call display_current_note
+.skip_note_display:
+
     ; --- Sound ---
     test r9, r9
     jz .silence
@@ -431,6 +438,179 @@ play_noise_note:
     ret
 %endif
 
+; Divisor to MIDI Note conversion
+; Input: R9 = PIT Divisor
+; Output: RAX = MIDI Note Number (0-127)
+; The formula: divisor = 1193180 / freq, freq = 440 * 2^((note-69)/12)
+; We reverse this: note = 69 + 12 * log2(1193180 / (divisor * 440))
+; Using a lookup table for approximation
+divisor_to_note:
+    push rbx
+    push rcx
+    push rdx
+    push r11
+    
+    ; Clamp divisor to valid range (100 - 12000)
+    mov rax, r9
+    cmp rax, 100
+    jge .div_ok1
+    mov rax, 100
+.div_ok1:
+    cmp rax, 12000
+    jle .div_ok2
+    mov rax, 12000
+.div_ok2:
+    
+    ; Use binary search on lookup table
+    ; Table is in descending order of divisors (higher notes = lower divisors)
+    ; 84 entries: indices 0-83, corresponding to notes 36-119
+    mov r11, rax ; r11 = target divisor
+    xor rbx, rbx ; low = 0
+    mov rcx, 84  ; high = 84
+    
+.binary_search:
+    cmp rbx, rcx
+    jge .search_done
+    
+    ; mid = (low + high) / 2
+    mov rax, rbx
+    add rax, rcx
+    shr rax, 1   ; rax = mid
+    
+    ; Get divisor at [note_table + mid*8]
+    mov rdx, note_table
+    mov r10, [rdx + rax*8] ; r10 = table[mid]
+    
+    ; Compare table[mid] with target
+    cmp r10, r11
+    je .search_done     ; Exact match
+    jl .search_left     ; table[mid] < target, search left
+    
+    ; table[mid] > target, search right
+    mov rbx, rax
+    inc rbx
+    jmp .binary_search
+    
+.search_left:
+    ; table[mid] < target, search left
+    mov rcx, rax
+    jmp .binary_search
+    
+.search_done:
+    ; RAX now contains the index, which maps to note (36 + rax)
+    add rax, 36 ; Base note is C2 (MIDI note 36)
+    
+    pop r11
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+; Get note name string from MIDI note number
+; Input: RAX = MIDI Note Number (0-127)
+; Output: RDI points to 3-byte string in buffer (note_buffer)
+; Preserves all except RDI
+get_note_name:
+    push rax
+    push rbx
+    push rcx
+    
+    ; RDI = note_buffer (will write to it)
+    mov rdi, note_buffer
+    
+    ; RAX = Note Number
+    mov rbx, rax
+    
+    ; Calculate octave = note / 12
+    mov rax, rbx
+    xor rdx, rdx
+    mov rcx, 12
+    div rcx
+    mov r8, rax ; r8 = octave
+    mov r9, rdx ; r9 = note within octave (0-11)
+    
+    ; Get note name from table
+    mov rax, r9
+    mov rsi, note_names
+    add rsi, rax ; each note name is 2 bytes
+    
+    ; Copy first character
+    lodsb
+    stosb
+    
+    ; Get second character (or space for natural notes)
+    lodsb
+    stosb
+    
+    ; Add octave digit
+    mov al, r8b
+    add al, '0'
+    stosb
+    
+    mov rdi, note_buffer
+    
+    pop rcx
+    pop rbx
+    pop rax
+    ret
+
+; Display current note as overlay
+; Input: R9 = PIT Divisor
+; Preserves: RSI, R8, R9, R10
+display_current_note:
+    push rsi
+    push r8
+    push r9
+    push r10
+    push rax
+    push rdi
+    push rcx
+    push rbx
+    push rdx
+    
+    ; Only if not silence (R9 != 0)
+    test r9, r9
+    jz .done_display
+    
+    ; Convert divisor to note
+    call divisor_to_note
+    
+    ; Get note name (output to note_buffer)
+    call get_note_name
+    
+    ; Display at top-left corner (position 0 on line 0)
+    mov rdi, 0xB8000
+    mov rsi, note_buffer
+    
+    ; Print first character (note name)
+    lodsb
+    mov ah, 0x0F ; White on Black
+    mov [rdi], ax
+    add rdi, 2
+    
+    ; Print second character (sharp or natural)
+    lodsb
+    mov ah, 0x0F
+    mov [rdi], ax
+    add rdi, 2
+    
+    ; Print octave
+    lodsb
+    mov ah, 0x0F
+    mov [rdi], ax
+    
+.done_display:
+    pop rdx
+    pop rbx
+    pop rcx
+    pop rdi
+    pop rax
+    pop r10
+    pop r9
+    pop r8
+    pop rsi
+    ret
+
 print_hex_dbg:
     ; Print RAX (low 16 bits) to [RDI]
     push rax
@@ -496,6 +676,111 @@ decompress_bg:
     ret
 
 ; DATA
+; Note names table: 12 notes * 2 bytes each (C, C#, D, D#, E, F, F#, G, G#, A, A#, B)
+note_names:
+    db 'C', ' ' ; C natural
+    db 'C', '#' ; C#
+    db 'D', ' ' ; D natural
+    db 'D', '#' ; D#
+    db 'E', ' ' ; E natural
+    db 'F', ' ' ; F natural
+    db 'F', '#' ; F#
+    db 'G', ' ' ; G natural
+    db 'G', '#' ; G#
+    db 'A', ' ' ; A natural
+    db 'A', '#' ; A#
+    db 'B', ' ' ; B natural
+
+; Lookup table: PIT divisors for each semitone from C2 (note 36) to B7 (note 119)
+; Divisor = 1193180 / frequency
+; Frequency = 440 * 2^((note - 69) / 12)
+; 84 entries total (C2 to B7)
+; Table is in DESCENDING order of divisors (ascending order of frequencies/pitches)
+align 8
+note_table:
+    ; C2 (36) to B2 (47)
+    dq 11936  ; C2 (65.41 Hz)
+    dq 11270  ; C#2
+    dq 10640  ; D2
+    dq 10039  ; D#2
+    dq 9474   ; E2
+    dq 8940   ; F2
+    dq 8437   ; F#2
+    dq 7960   ; G2
+    dq 7511   ; G#2
+    dq 7087   ; A2 (110 Hz)
+    dq 6686   ; A#2
+    dq 6305   ; B2
+    ; C3 (48) to B3 (59)
+    dq 5952   ; C3
+    dq 5620   ; C#3
+    dq 5305   ; D3
+    dq 5005   ; D#3
+    dq 4720   ; E3
+    dq 4455   ; F3
+    dq 4204   ; F#3
+    dq 3968   ; G3
+    dq 3747   ; G#3
+    dq 3536   ; A3
+    dq 3337   ; A#3
+    dq 3149   ; B3
+    ; C4 (60) to B4 (71)
+    dq 2973   ; C4 (middle C, 261.63 Hz)
+    dq 2806   ; C#4
+    dq 2650   ; D4
+    dq 2500   ; D#4
+    dq 2359   ; E4
+    dq 2227   ; F4
+    dq 2101   ; F#4
+    dq 1984   ; G4
+    dq 1874   ; G#4
+    dq 1770   ; A4 (440 Hz - concert pitch)
+    dq 1670   ; A#4
+    dq 1575   ; B4
+    ; C5 (72) to B5 (83)
+    dq 1485   ; C5
+    dq 1402   ; C#5
+    dq 1324   ; D5
+    dq 1250   ; D#5
+    dq 1180   ; E5
+    dq 1113   ; F5
+    dq 1050   ; F#5
+    dq 992    ; G5
+    dq 936    ; G#5
+    dq 883    ; A5
+    dq 833    ; A#5
+    dq 786    ; B5
+    ; C6 (84) to B6 (95)
+    dq 742    ; C6
+    dq 700    ; C#6
+    dq 661    ; D6
+    dq 624    ; D#6
+    dq 589    ; E6
+    dq 556    ; F6
+    dq 524    ; F#6
+    dq 495    ; G6
+    dq 467    ; G#6
+    dq 441    ; A6
+    dq 416    ; A#6
+    dq 392    ; B6
+    ; C7 (96) to B7 (107)
+    dq 370    ; C7
+    dq 349    ; C#7
+    dq 330    ; D7
+    dq 311    ; D#7
+    dq 294    ; E7
+    dq 277    ; F7
+    dq 262    ; F#7
+    dq 247    ; G7
+    dq 233    ; G#7
+    dq 220    ; A7
+    dq 208    ; A#7
+    dq 196    ; B7
+
+; Temporary buffer for note name string (3 bytes: 2 chars + octave)
+align 4
+note_buffer: db 0, 0, 0
+
 align 8
 gdt_start: dq 0
 gdt_code: dq 0x00209A0000000000
