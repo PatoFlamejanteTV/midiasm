@@ -126,13 +126,14 @@ long_mode_entry:
     test r9, r9
     jz .silence
 
-    ; Check if using Noise Mode (Channel 9 = Percussion)
 %ifdef NOISE_BUILD
-    cmp r10, 9
-    je .noise_mode
-
+    ; Noise Mode (All sounds as noise)
+    mov rcx, r8 ; Duration
+    call play_noise_note
+    ; play_noise_note handles the delay internally
+    jmp .next_note
+%else
     ; Regular tone mode
-%endif
     ; Sound ON
     mov rax, r9
     push rax
@@ -148,19 +149,12 @@ long_mode_entry:
     out 0x61, al
     jmp .wait_dur
 
-%ifdef NOISE_BUILD
-.noise_mode:
-    mov rcx, r8 ; Duration
-    call play_noise_note
-    ; play_noise_note handles the delay internally
-    jmp .next_note
-%endif
-
 .silence:
     ; Sound OFF
     in al, 0x61
     and al, 0xFC
     out 0x61, al
+%endif
 
 .wait_dur:
     ; Delay using PIT
