@@ -7,6 +7,7 @@ Midiasm is a simple kernel designed to play midis, tested on QEMU.
 - NASM
 - Python3
 - QEMU
+- A .MIDI file
 
 ## Usage
 

@@ -1,2 +1,6 @@
 *.bin
 *.img
+res/midi/badapple.mid
+
+*.kra
+*.krz

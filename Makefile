@@ -10,17 +10,20 @@ boot.bin: asm/boot.asm
 bg.bin: res/img/sample.bmp tools/compress_bg.py
 	python3 tools/compress_bg.py res/img/sample.bmp
 
-kernel.bin: asm/kernel.asm sonic.bin $(if $(NO_BG),,bg.bin)
+kernel.bin: asm/kernel.asm ba.bin $(if $(NO_BG),,bg.bin)
 	nasm -f bin -I ./ $(if $(NOISE),-DNOISE_BUILD,) $(if $(NO_BG),-DNO_BG,) asm/kernel.asm -o kernel.bin
 
 sonic.bin: res/midi/scd-Palmtree_Panic_Past.mid tools/smart_converter.py
 	python3 tools/smart_converter.py res/midi/scd-Palmtree_Panic_Past.mid sonic.bin
 
+ba.bin: res/midi/badapple.mid tools/smart_converter.py
+	python3 tools/smart_converter.py res/midi/badapple.mid ba.bin
+
 qemu:
 	qemu-system-x86_64 -drive format=raw,file=os.img -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
 
 
-uefi.bin: asm/uefi.asm sonic.bin
+uefi.bin: asm/uefi.asm ba.bin
 	nasm -f bin -I ./ asm/uefi.asm -o uefi.bin
 
 uefi.img: uefi.bin

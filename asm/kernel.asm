@@ -506,7 +506,7 @@ gdt_desc: dw gdt_end - gdt_start - 1
 
 align 16
 music_data:
-    incbin "sonic.bin"
+    incbin "ba.bin"
     times 16 db 0 ; Padding/Terminator
 
 align 16
