@@ -1,5 +1,7 @@
 *.bin
 *.img
+*.lst
+
 res/midi/badapple.mid
 
 *.kra

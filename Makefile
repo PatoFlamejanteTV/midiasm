@@ -8,7 +8,7 @@ boot.bin: asm/boot.asm
 	nasm -f bin asm/boot.asm -o boot.bin
 
 bg.bin: res/img/sample.bmp tools/compress_bg.py
-	python3 tools/compress_bg.py res/img/sample.bmp
+	python3 tools/compress_bg.py res/img/ba.jpg
 
 kernel.bin: asm/kernel.asm ba.bin $(if $(NO_BG),,bg.bin)
 	nasm -f bin -I ./ $(if $(NOISE),-DNOISE_BUILD,) $(if $(NO_BG),-DNO_BG,) asm/kernel.asm -o kernel.bin
