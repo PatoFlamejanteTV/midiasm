@@ -104,10 +104,6 @@ def midi_to_bin(input_file, output_file):
                             continue
                     
                     if cmd in [0x80, 0x90]:
-                        # Filter Channel 10 (Percussion)
-                        if channel == 9:
-                            continue
-                            
                         all_events.append({
                             'tick': curr_ticks,
                             'type': 'midi',

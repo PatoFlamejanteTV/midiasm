@@ -73,7 +73,9 @@ long_mode_entry:
     out 0x40, al     ; MSB 0
 
     ; Initialize Visuals
+%ifndef NO_BG
     call decompress_bg
+%endif
     call clear_vga
 
     ; --- Main Music Loop ---
@@ -121,25 +123,16 @@ long_mode_entry:
     call visualizer_update
 
     ; --- Sound ---
-%ifdef NOISE_BUILD
-    test r9, r9
-    jz .silence_noise
-
-    ; Sound ON (Noise Mode)
-    mov rcx, r8 ; Duration
-    call play_noise_note
-    ; play_noise_note handles the delay internally
-    jmp .next_note
-
-.silence_noise:
-    mov rcx, r8
-    call pit_delay
-    jmp .next_note
-
-%else
     test r9, r9
     jz .silence
 
+    ; Check if using Noise Mode (Channel 9 = Percussion)
+%ifdef NOISE_BUILD
+    cmp r10, 9
+    je .noise_mode
+
+    ; Regular tone mode
+%endif
     ; Sound ON
     mov rax, r9
     push rax
@@ -155,6 +148,14 @@ long_mode_entry:
     out 0x61, al
     jmp .wait_dur
 
+%ifdef NOISE_BUILD
+.noise_mode:
+    mov rcx, r8 ; Duration
+    call play_noise_note
+    ; play_noise_note handles the delay internally
+    jmp .next_note
+%endif
+
 .silence:
     ; Sound OFF
     in al, 0x61
@@ -167,7 +168,6 @@ long_mode_entry:
     call pit_delay
     
     jmp .next_note
-%endif
 
 .hang:
     ; Turn off sound and halt
@@ -517,5 +517,7 @@ music_data:
 
 align 16
 bg_data:
+%ifndef NO_BG
     incbin "bg.bin"
+%endif
     db 0, 0 ; Terminator
