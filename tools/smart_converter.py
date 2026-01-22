@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+# TODO: Convert allat to cython or atleast rewrite it to C.
 import struct
 import sys
 

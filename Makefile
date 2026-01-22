@@ -12,7 +12,7 @@ bg.bin: res/img/sample.bmp tools/compress_bg.py
 
 kernel.bin: asm/kernel.asm ba.bin $(if $(NO_BG),,bg.bin)
 	nasm -f bin -I ./ $(if $(NOISE),-DNOISE_BUILD,) $(if $(NO_BG),-DNO_BG,) asm/kernel.asm -o kernel.bin
-
+# TODO: Add more flags for more stuff idk
 sonic.bin: res/midi/scd-Palmtree_Panic_Past.mid tools/smart_converter.py
 	python3 tools/smart_converter.py res/midi/scd-Palmtree_Panic_Past.mid sonic.bin
 

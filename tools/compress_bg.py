@@ -88,7 +88,7 @@ def compress_image(image_path, output_bin, output_preview):
         i += 2
         
     preview_img.putdata(recon_pixels)
-    preview_img = preview_img.resize((800, 250), Image.Resampling.NEAREST) # Upscale for easier viewing
+    preview_img = preview_img.resize((800, 250), Image.Resampling.NEAREST) # TODO: make outputs be actually good instead of dogshit
     preview_img.save(output_preview)
     print(f"Saved preview: {output_preview}")
 
