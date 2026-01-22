@@ -8,9 +8,9 @@ boot.bin: asm/boot.asm
 	nasm -f bin asm/boot.asm -o boot.bin
 
 bg.bin: res/img/sample.bmp tools/compress_bg.py
-	python3 tools/compress_bg.py res/img/ba.jpg
+	python3 tools/compress_bg.py res/img/white.png
 
-kernel.bin: asm/kernel.asm ba.bin $(if $(NO_BG),,bg.bin)
+kernel.bin: asm/kernel.asm le.bin $(if $(NO_BG),,bg.bin)
 	nasm -f bin -I ./ $(if $(NOISE),-DNOISE_BUILD,) $(if $(NO_BG),-DNO_BG,) asm/kernel.asm -o kernel.bin
 # TODO: Add more flags for more stuff idk
 sonic.bin: res/midi/scd-Palmtree_Panic_Past.mid tools/smart_converter.py
@@ -19,11 +19,15 @@ sonic.bin: res/midi/scd-Palmtree_Panic_Past.mid tools/smart_converter.py
 ba.bin: res/midi/badapple.mid tools/smart_converter.py
 	python3 tools/smart_converter.py res/midi/badapple.mid ba.bin
 
+le.bin: res/midi/lehappisong/2.mid tools/smart_converter.py
+	python3 tools/smart_converter.py res/midi/lehappisong/drum.mid drum.bin
+
+
 qemu:
 	qemu-system-x86_64 -drive format=raw,file=os.img -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
 
 
-uefi.bin: asm/uefi.asm ba.bin
+uefi.bin: asm/uefi.asm drum.bin
 	nasm -f bin -I ./ asm/uefi.asm -o uefi.bin
 
 uefi.img: uefi.bin

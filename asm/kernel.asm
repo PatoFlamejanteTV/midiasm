@@ -155,13 +155,13 @@ long_mode_entry:
     or al, 3
     out 0x61, al
     jmp .wait_dur
+%endif
 
 .silence:
     ; Sound OFF
     in al, 0x61
     and al, 0xFC
     out 0x61, al
-%endif
 
 .wait_dur:
     ; Delay using PIT
@@ -791,7 +791,7 @@ gdt_desc: dw gdt_end - gdt_start - 1
 
 align 16
 music_data:
-    incbin "ba.bin"
+    incbin "drum.bin"
     times 16 db 0 ; Padding/Terminator
 
 align 16

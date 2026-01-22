@@ -326,7 +326,7 @@ PurplePixel dd 0x00FF00FF
 
 align 16
 music_data:
-    incbin "ba.bin"
+    incbin "drum.bin"
     times 16 db 0
 
 align SECTION_ALIGNMENT
